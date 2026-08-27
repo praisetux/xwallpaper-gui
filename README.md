@@ -16,41 +16,42 @@ its images in a thumbnail gallery, and apply one using `xwallpaper`.
 
 The app does not copy, move, or modify wallpaper files.
 
-## Requirements
+## Install
 
-- An X11 session (`xwallpaper` is an X11 application)
-- Python 3, GTK 3, and PyGObject
-- `xwallpaper`
-- `xrandr` (optional; used to target one display)
+XWallpaper GUI is installed from this GitHub repository. It is **not** currently
+published in the Debian, Ubuntu, Arch, Fedora, or other distribution
+repositories.
 
-Example installations:
-
-```sh
-# Debian or Ubuntu
-sudo apt install xwallpaper python3-gi gir1.2-gtk-3.0 x11-xserver-utils
-
-# Arch Linux
-sudo pacman -S xwallpaper python-gobject gtk3 xorg-xrandr
-
-# Fedora (package availability may vary)
-sudo dnf install xwallpaper python3-gobject gtk3 xrandr
-```
-
-## Install and open from the application menu
+Open a terminal and run:
 
 ```sh
+git clone https://github.com/praisetux/xwallpaper-gui.git
+cd xwallpaper-gui
 ./install.sh
 ```
 
-Then open the desktop application menu and search for **XWallpaper GUI**. The
-installer is user-local, does not use `sudo`, and installs:
+The installer checks everything the app needs. On Debian, Ubuntu, Linux Mint,
+and Arch-based systems, it can offer to install missing system dependencies.
+Those packages are Python, GTK, `xwallpaper`, and `xrandr`—not XWallpaper GUI
+itself. On other distributions it lists what is missing without guessing an
+unsafe or unavailable package command.
+
+Once setup finishes, open the desktop application menu and search for
+**XWallpaper GUI**. The app installation is user-local and places:
 
 - The executable at `~/.local/bin/xwallpaper-gui`.
 - The menu launcher at
   `~/.local/share/applications/io.github.xwallpaper_gui.desktop`.
 
-Some application menus take a few seconds to notice a newly installed launcher.
-Log out and back in only if it still does not appear.
+No terminal command is needed for normal use after installation. Some
+application menus take a few seconds to notice a new launcher.
+
+### Requirements
+
+- An X11 session (`xwallpaper` is an X11 application)
+- Python 3, GTK 3, and PyGObject
+- `xwallpaper`
+- `xrandr`
 
 To remove the executable and menu entry:
 
@@ -58,9 +59,7 @@ To remove the executable and menu entry:
 ./install.sh uninstall
 ```
 
-Uninstalling keeps the saved wallpaper preferences. This machine already has
-GTK and PyGObject, but `xwallpaper` is not currently installed. The gallery will
-open, but applying requires that package.
+Uninstalling keeps saved wallpaper preferences.
 
 To restore the most recently applied wallpaper at X11 login, add this command to
 the desktop or window manager's startup configuration:
