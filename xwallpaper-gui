@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -15,26 +16,36 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 APP_ID = "io.github.xwallpaper_gui"
-EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+EXTENSIONS = {".jpg", ".jpeg", ".png"}
 MODES = (
     ("zoom", "Zoom — fill and crop"),
     ("maximize", "Maximize — fit without cropping"),
     ("stretch", "Stretch — fill exactly"),
     ("center", "Center — original size"),
     ("tile", "Tile — repeat the image"),
-    ("focus", "Focus — fill around focal area"),
 )
 
 
 def settings_path():
-    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    configured = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(configured) if configured else Path.home() / ".config"
     return base / "xwallpaper-gui" / "settings.json"
 
 
 def load_settings():
     try:
         value = json.loads(settings_path().read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            return {}
+        clean = {}
+        for key in ("folder", "last_wallpaper", "output"):
+            if isinstance(value.get(key), str):
+                clean[key] = value[key]
+        if value.get("mode") in {item[0] for item in MODES}:
+            clean["mode"] = value["mode"]
+        if isinstance(value.get("recursive"), bool):
+            clean["recursive"] = value["recursive"]
+        return clean
     except (OSError, ValueError):
         return {}
 
@@ -50,7 +61,14 @@ def save_settings(value):
 def outputs():
     if not shutil.which("xrandr") or not os.environ.get("DISPLAY"):
         return []
-    result = subprocess.run(["xrandr", "--query"], capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode:
+        return []
     return [line.split()[0] for line in result.stdout.splitlines()
             if len(line.split()) > 1 and line.split()[1] == "connected"]
 
@@ -70,14 +88,22 @@ def restore():
     if not shutil.which("xwallpaper"):
         print("xwallpaper is not installed", file=sys.stderr)
         return 1
+    if not os.environ.get("DISPLAY"):
+        print("no X11 display was detected", file=sys.stderr)
+        return 1
     if not image.is_file():
         print("the saved wallpaper no longer exists", file=sys.stderr)
         return 1
+    output = settings.get("output", "All displays")
+    if output != "All displays" and output not in outputs():
+        print(f"the saved display is no longer connected: {output}", file=sys.stderr)
+        return 1
     try:
-        return subprocess.run(wallpaper_command(
-            image, settings.get("mode", "zoom"),
-            settings.get("output", "All displays"))).returncode
-    except ValueError as error:
+        return subprocess.run(
+            wallpaper_command(image, settings.get("mode", "zoom"), output),
+            timeout=10,
+        ).returncode
+    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         print(error, file=sys.stderr)
         return 1
 
@@ -92,6 +118,7 @@ class Window(Gtk.ApplicationWindow):
         self.selected = None
         self.scan_id = 0
         self.loaded = 0
+        self.dependency_warning = not shutil.which("xwallpaper")
         self._build()
         self._restore_controls()
         GLib.idle_add(self._startup)
@@ -170,7 +197,7 @@ class Window(Gtk.ApplicationWindow):
         bar.pack_end(self.apply_button)
 
     def _startup(self):
-        if not shutil.which("xwallpaper"):
+        if self.dependency_warning:
             self.message("xwallpaper is not installed. Browsing works, but applying requires it.")
         folder = self.settings.get("folder")
         if folder and Path(folder).is_dir():
@@ -184,6 +211,16 @@ class Window(Gtk.ApplicationWindow):
         if not self.output.set_active_id(self.settings.get("output", "All displays")):
             self.output.set_active_id("All displays")
         self.recursive.set_active(bool(self.settings.get("recursive")))
+
+    def _refresh_outputs(self):
+        selected = self.output.get_active_id() or self.settings.get("output", "All displays")
+        available = outputs()
+        self.output.remove_all()
+        self.output.append("All displays", "All displays")
+        for name in available:
+            self.output.append(name, name)
+        self.output.set_active_id(selected if selected in available else "All displays")
+        return available
 
     def message(self, text, kind=Gtk.MessageType.WARNING):
         self.info.set_message_type(kind)
@@ -224,15 +261,16 @@ class Window(Gtk.ApplicationWindow):
             self.remember()
             self.scan()
 
-    def _paths(self):
-        iterator = self.folder.rglob("*") if self.recursive.get_active() else self.folder.iterdir()
+    @staticmethod
+    def _find_paths(folder, recursive):
+        iterator = folder.rglob("*") if recursive else folder.iterdir()
         try:
-            return sorted((path for path in iterator
-                           if path.is_file() and path.suffix.lower() in EXTENSIONS),
-                          key=lambda path: str(path).casefold())
+            paths = sorted((path for path in iterator
+                            if path.is_file() and path.suffix.lower() in EXTENSIONS),
+                           key=lambda path: str(path).casefold())
+            return paths, None
         except OSError as error:
-            self.message(f"Could not completely scan the folder: {error}")
-            return []
+            return [], str(error)
 
     def scan(self):
         if not self.folder:
@@ -244,30 +282,53 @@ class Window(Gtk.ApplicationWindow):
         self.apply_button.set_sensitive(False)
         for child in self.flow.get_children():
             self.flow.remove(child)
-        paths = self._paths()
         self.folder_button.set_label(self.folder.name or str(self.folder))
         self.folder_button.set_tooltip_text(str(self.folder))
+        self.stack.set_visible_child_name("gallery")
+        self.status.set_text(f"Scanning {self.folder}…")
+        threading.Thread(
+            target=self._scan_worker,
+            args=(self.folder, self.recursive.get_active(), scan_id),
+            daemon=True,
+        ).start()
+
+    def _scan_worker(self, folder, recursive, scan_id):
+        paths, error = self._find_paths(folder, recursive)
+        GLib.idle_add(self._scan_ready, paths, error, scan_id)
+
+    def _scan_ready(self, paths, error, scan_id):
+        if scan_id != self.scan_id:
+            return GLib.SOURCE_REMOVE
+        if error:
+            self.message(f"Could not completely scan the folder: {error}")
         if not paths:
             self.empty_title.set_markup("<big><b>No wallpaper images found</b></big>")
             self.empty_detail.set_text("Choose another folder or include subfolders.")
             self.stack.set_visible_child_name("empty")
             self.status.set_text(f"0 images in {self.folder}")
-            return
-        self.info.hide()
+            return GLib.SOURCE_REMOVE
         self.stack.set_visible_child_name("gallery")
         self.status.set_text(f"Loading {len(paths)} images…")
-        GLib.idle_add(self._thumbnail, paths, 0, scan_id)
+        threading.Thread(
+            target=self._thumbnail_worker, args=(paths, scan_id), daemon=True
+        ).start()
+        return GLib.SOURCE_REMOVE
 
-    def _thumbnail(self, paths, index, scan_id):
-        if scan_id != self.scan_id:
-            return GLib.SOURCE_REMOVE
-        if index == len(paths):
-            self.status.set_text(f"{self.loaded} images in {self.folder}")
-            return GLib.SOURCE_REMOVE
-        path = paths[index]
-        try:
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 200, 125, True)
-            pixbuf = pixbuf.apply_embedded_orientation()
+    def _thumbnail_worker(self, paths, scan_id):
+        for path in paths:
+            if scan_id != self.scan_id:
+                return
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(path), 200, 125, True
+                ).apply_embedded_orientation()
+            except GLib.Error:
+                continue
+            GLib.idle_add(self._add_thumbnail, path, pixbuf, scan_id)
+        GLib.idle_add(self._finish_thumbnails, scan_id)
+
+    def _add_thumbnail(self, path, pixbuf, scan_id):
+        if scan_id == self.scan_id:
             tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             tile.set_size_request(200, -1)
             image = Gtk.Image.new_from_pixbuf(pixbuf)
@@ -282,9 +343,11 @@ class Window(Gtk.ApplicationWindow):
             self.flow.add(child)
             child.show_all()
             self.loaded += 1
-        except GLib.Error:
-            pass
-        GLib.idle_add(self._thumbnail, paths, index + 1, scan_id)
+        return GLib.SOURCE_REMOVE
+
+    def _finish_thumbnails(self, scan_id):
+        if scan_id == self.scan_id:
+            self.status.set_text(f"{self.loaded} images in {self.folder}")
         return GLib.SOURCE_REMOVE
 
     def _selection_changed(self, flow):
@@ -303,16 +366,23 @@ class Window(Gtk.ApplicationWindow):
         if not os.environ.get("DISPLAY"):
             self.message("No X11 display was detected; xwallpaper requires X11.")
             return
-        result = subprocess.run(wallpaper_command(
-            self.selected, self.mode.get_active_id() or "zoom",
-            self.output.get_active_id() or "All displays"),
-            capture_output=True, text=True)
+        output = self.output.get_active_id() or "All displays"
+        if output != "All displays" and output not in self._refresh_outputs():
+            self.message(f"Display {output} is no longer connected. Choose another display.")
+            return
+        try:
+            result = subprocess.run(wallpaper_command(
+                self.selected, self.mode.get_active_id() or "zoom", output),
+                capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            self.message(f"Could not run xwallpaper: {error}")
+            return
         if result.returncode:
             self.message("Could not apply wallpaper: " +
                          (result.stderr.strip() or "unknown xwallpaper error"))
             return
         self.settings.update(folder=str(self.folder), last_wallpaper=str(self.selected),
-            mode=self.mode.get_active_id(), output=self.output.get_active_id(),
+            mode=self.mode.get_active_id(), output=output,
             recursive=self.recursive.get_active())
         self.remember()
         self.message(f"Applied {self.selected.name}", Gtk.MessageType.INFO)

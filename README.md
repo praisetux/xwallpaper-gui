@@ -6,11 +6,11 @@ its images in a thumbnail gallery, and apply one using `xwallpaper`.
 ## Features
 
 - Remembers the chosen wallpaper folder.
-- Shows JPG, PNG, WebP, BMP, GIF, and TIFF files in a responsive grid.
+- Shows PNG and JPEG files supported by `xwallpaper` in a responsive grid.
 - Can include subfolders.
 - Applies the selected thumbnail with a button or double-click.
 - Supports all displays or one display detected through `xrandr`.
-- Offers zoom, maximize, stretch, centre, tile, and focus layouts.
+- Offers zoom, maximize, stretch, centre, and tile layouts.
 - Saves the last wallpaper, layout, display, and folder.
 - Supports non-interactive restoration with `--restore`.
 
@@ -77,5 +77,5 @@ Settings are stored in
 - X11 only.
 - Different images can be applied to displays one at a time; there is no
   multi-display arrangement editor yet.
-- A very large image or remote folder can briefly pause while one thumbnail is
-  decoded, though thumbnails are loaded incrementally to keep the GUI updating.
+- Very large or remote wallpaper collections may take time to scan, but scanning
+  and thumbnail decoding run in the background so the interface stays usable.
