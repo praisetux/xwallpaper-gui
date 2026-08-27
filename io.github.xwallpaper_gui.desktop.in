@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=XWallpaper GUI
+Comment=Browse and apply wallpapers from a folder
+Exec=@EXEC@
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Categories=Utility;GTK;
+Keywords=wallpaper;background;desktop;image;
+StartupNotify=true
+StartupWMClass=io.github.xwallpaper_gui
