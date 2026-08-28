@@ -75,6 +75,30 @@ class WallpaperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.wallpaper_command("/tmp/wallpaper.png", "focus", "All displays")
 
+    def test_xinitrc_command_is_added_without_changing_existing_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xinitrc = Path(directory) / ".xinitrc"
+            xinitrc.write_text("#!/bin/sh\nexec openbox-session\n", encoding="utf-8")
+            app.save_xinitrc_command(
+                ["xwallpaper", "--zoom", "/tmp/a wallpaper.png"], xinitrc
+            )
+            self.assertEqual(xinitrc.read_text(encoding="utf-8"),
+                "#!/bin/sh\n\n"
+                "# BEGIN xwallpaper-gui wallpaper\n"
+                "xwallpaper --zoom '/tmp/a wallpaper.png'\n"
+                "# END xwallpaper-gui wallpaper\n\n"
+                "exec openbox-session\n")
+
+    def test_xinitrc_command_is_replaced_instead_of_duplicated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xinitrc = Path(directory) / ".xinitrc"
+            app.save_xinitrc_command(["xwallpaper", "--zoom", "old.png"], xinitrc)
+            app.save_xinitrc_command(["xwallpaper", "--tile", "new.png"], xinitrc)
+            contents = xinitrc.read_text(encoding="utf-8")
+            self.assertNotIn("old.png", contents)
+            self.assertEqual(contents.count("# BEGIN xwallpaper-gui wallpaper"), 1)
+            self.assertIn("xwallpaper --tile new.png", contents)
+
     def test_folder_scan_filters_and_sorts(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

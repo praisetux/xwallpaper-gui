@@ -11,7 +11,7 @@ INSTALL_PATH="$BIN_DIR/$APP_NAME"
 DESKTOP_PATH="$APPLICATIONS_DIR/io.github.xwallpaper_gui.desktop"
 
 usage() {
-    printf 'Usage: %s [install|uninstall|check]\n' "$0"
+    printf 'Usage: %s [install|update|uninstall|check]\n' "$0"
 }
 
 dependency_status() {
@@ -103,6 +103,28 @@ install_app() {
     printf 'Open your application menu and search for “XWallpaper GUI”.\n'
 }
 
+update_app() {
+    if ! command -v git >/dev/null 2>&1; then
+        printf 'Git is required to update XWallpaper GUI.\n' >&2
+        return 1
+    fi
+    if ! git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf 'This copy was not installed from a Git checkout.\n' >&2
+        printf 'Download the latest release, then run its installer.\n' >&2
+        return 1
+    fi
+    if [ -n "$(git -C "$SCRIPT_DIR" status --porcelain)" ]; then
+        printf 'Update stopped because the source checkout has uncommitted changes:\n' >&2
+        git -C "$SCRIPT_DIR" status --short >&2
+        printf 'Commit or stash them, then run this command again.\n' >&2
+        return 1
+    fi
+
+    printf 'Checking for XWallpaper GUI updates...\n'
+    git -C "$SCRIPT_DIR" pull --ff-only
+    install_app
+}
+
 uninstall_app() {
     rm -f "$INSTALL_PATH" "$DESKTOP_PATH"
     rm -rf "$APP_DATA_DIR"
@@ -113,6 +135,7 @@ uninstall_app() {
 
 case "${1:-install}" in
     install) install_app ;;
+    update) update_app ;;
     uninstall) uninstall_app ;;
     check)
         dependency_status

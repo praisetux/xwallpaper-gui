@@ -14,7 +14,9 @@ its images in a thumbnail gallery, and apply one using `xwallpaper`.
 - Supports all displays or one display detected through `xrandr`.
 - Offers zoom, maximize, stretch, centre, and tile layouts.
 - Saves the last wallpaper, layout, display, and folder.
-- Supports non-interactive restoration with `--restore`.
+- Adds the selected `xwallpaper` command to `~/.xinitrc` so it is restored
+  when an X11 session is started with `startx`.
+- Supports non-interactive restoration with `--restore` for other startup systems.
 
 The app does not copy, move, or modify wallpaper files.
 
@@ -49,6 +51,18 @@ Once setup finishes, open the desktop application menu and search for
 No terminal command is needed for normal use after installation. Some
 application menus take a few seconds to notice a new launcher.
 
+### Update
+
+From the cloned `xwallpaper-gui` folder, update the source and installed app
+with one command:
+
+```sh
+./install.sh update
+```
+
+The updater fast-forwards the Git checkout and installs the refreshed files.
+It stops without changing anything if the checkout contains uncommitted work.
+
 ### Requirements
 
 - An X11 session (`xwallpaper` is an X11 application)
@@ -64,8 +78,12 @@ To remove the executable and menu entry:
 
 Uninstalling keeps saved wallpaper preferences.
 
-To restore the most recently applied wallpaper at X11 login, add this command to
-the desktop or window manager's startup configuration:
+Each successful Apply updates a marked block in `~/.xinitrc`. Existing content
+is preserved and repeated changes replace that block rather than adding duplicate
+commands. This takes effect for X11 sessions started through `startx`.
+
+Desktop environments that do not read `~/.xinitrc` can instead run this command
+from their own startup configuration:
 
 ```sh
 /absolute/path/to/xwallpaper-gui --restore

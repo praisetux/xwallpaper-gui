@@ -9,7 +9,7 @@ import threading
 from .constants import EXTENSIONS, MODES
 from .gtk import Gdk, GdkPixbuf, GLib, Gtk
 from .settings import load_settings, save_settings
-from .system import outputs, wallpaper_command
+from .system import outputs, save_xinitrc_command, wallpaper_command
 
 
 class Window(Gtk.ApplicationWindow):
@@ -346,9 +346,10 @@ class Window(Gtk.ApplicationWindow):
         if output != "All displays" and output not in self._refresh_outputs():
             self.message(f"Display {output} is no longer connected. Choose another display.")
             return
+        command = wallpaper_command(
+            self.selected, self.mode.get_active_id() or "zoom", output)
         try:
-            result = subprocess.run(wallpaper_command(
-                self.selected, self.mode.get_active_id() or "zoom", output),
+            result = subprocess.run(command,
                 capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired) as error:
             self.message(f"Could not run xwallpaper: {error}")
@@ -361,4 +362,9 @@ class Window(Gtk.ApplicationWindow):
             mode=self.mode.get_active_id(), output=output,
             recursive=self.recursive.get_active())
         self.remember()
+        try:
+            save_xinitrc_command(command)
+        except OSError as error:
+            self.message(f"Wallpaper applied, but could not update ~/.xinitrc: {error}")
+            return
         self.message(f"Applied {self.selected.name}", Gtk.MessageType.INFO)
