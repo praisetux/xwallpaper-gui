@@ -82,3 +82,7 @@ Settings are stored in
   multi-display arrangement editor yet.
 - Very large or remote wallpaper collections may take time to scan, but scanning
   and thumbnail decoding run in the background so the interface stays usable.
+
+## AI Notice
+
+AI-assisted tools were used during the development of this project.
