@@ -40,6 +40,7 @@ Once setup finishes, open the desktop application menu and search for
 **XWallpaper GUI**. The app installation is user-local and places:
 
 - The executable at `~/.local/bin/xwallpaper-gui`.
+- The application modules at `~/.local/share/xwallpaper-gui/`.
 - The menu launcher at
   `~/.local/share/applications/io.github.xwallpaper_gui.desktop`.
 

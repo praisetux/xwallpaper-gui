@@ -6,6 +6,7 @@ APP_NAME="xwallpaper-gui"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+APP_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/xwallpaper-gui"
 INSTALL_PATH="$BIN_DIR/$APP_NAME"
 DESKTOP_PATH="$APPLICATIONS_DIR/io.github.xwallpaper_gui.desktop"
 
@@ -87,8 +88,11 @@ refresh_menu() {
 install_app() {
     check_dependencies
 
-    install -d "$BIN_DIR" "$APPLICATIONS_DIR"
+    install -d "$BIN_DIR" "$APPLICATIONS_DIR" "$APP_DATA_DIR/xwallpaper_gui"
     install -m 755 "$SCRIPT_DIR/xwallpaper-gui" "$INSTALL_PATH"
+    for module in "$SCRIPT_DIR"/xwallpaper_gui/*.py; do
+        install -m 644 "$module" "$APP_DATA_DIR/xwallpaper_gui/"
+    done
 
     sed "s|@EXEC@|$INSTALL_PATH|g" \
         "$SCRIPT_DIR/io.github.xwallpaper_gui.desktop.in" > "$DESKTOP_PATH"
@@ -101,6 +105,7 @@ install_app() {
 
 uninstall_app() {
     rm -f "$INSTALL_PATH" "$DESKTOP_PATH"
+    rm -rf "$APP_DATA_DIR"
     refresh_menu
     printf 'Uninstalled XWallpaper GUI.\n'
     printf 'Saved preferences were left in your configuration directory.\n'

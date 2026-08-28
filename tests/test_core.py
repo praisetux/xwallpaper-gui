@@ -1,4 +1,3 @@
-import importlib.machinery
 import json
 import os
 from pathlib import Path
@@ -7,10 +6,8 @@ import unittest
 from unittest import mock
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-app = importlib.machinery.SourceFileLoader(
-    "xwallpaper_gui", str(PROJECT_ROOT / "xwallpaper-gui")
-).load_module()
+import xwallpaper_gui as app
+from xwallpaper_gui import cli, system
 
 
 class SettingsTests(unittest.TestCase):
@@ -52,6 +49,14 @@ class SettingsTests(unittest.TestCase):
                 Path.home() / ".config" / "xwallpaper-gui" / "settings.json",
             )
 
+    def test_settings_round_trip(self):
+        expected = {"folder": "/pictures", "mode": "center", "recursive": False}
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}):
+            app.save_settings(expected)
+            self.assertEqual(app.load_settings(), expected)
+            self.assertFalse(app.settings_path().with_suffix(".tmp").exists())
+
 
 class WallpaperTests(unittest.TestCase):
     def test_only_xwallpaper_image_formats_are_listed(self):
@@ -66,6 +71,10 @@ class WallpaperTests(unittest.TestCase):
             ["xwallpaper", "--output", "DP-1", "--zoom", "/tmp/a wallpaper.png"],
         )
 
+    def test_command_rejects_an_invalid_layout(self):
+        with self.assertRaises(ValueError):
+            app.wallpaper_command("/tmp/wallpaper.png", "focus", "All displays")
+
     def test_folder_scan_filters_and_sorts(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
@@ -75,8 +84,22 @@ class WallpaperTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual([path.name for path in paths], ["a.jpg", "b.PNG"])
 
-    @mock.patch.object(app.shutil, "which", return_value="/usr/bin/xrandr")
-    @mock.patch.object(app.subprocess, "run")
+    def test_recursive_scan_includes_nested_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            nested = folder / "nested"
+            nested.mkdir()
+            (folder / "top.png").touch()
+            (nested / "inside.jpg").touch()
+            paths, error = app.Window._find_paths(folder, True)
+            self.assertIsNone(error)
+            self.assertEqual(
+                {path.relative_to(folder).as_posix() for path in paths},
+                {"top.png", "nested/inside.jpg"},
+            )
+
+    @mock.patch.object(system.shutil, "which", return_value="/usr/bin/xrandr")
+    @mock.patch.object(system.subprocess, "run")
     def test_output_detection_ignores_disconnected_outputs(self, run, _which):
         run.return_value = mock.Mock(
             returncode=0,
@@ -87,17 +110,33 @@ class WallpaperTests(unittest.TestCase):
 
     def test_restore_rejects_a_stale_display(self):
         with tempfile.NamedTemporaryFile(suffix=".png") as image, \
-                mock.patch.object(app, "load_settings", return_value={
+                mock.patch.object(cli, "load_settings", return_value={
                     "last_wallpaper": image.name,
                     "mode": "zoom",
                     "output": "DP-9",
                 }), \
-                mock.patch.object(app.shutil, "which", return_value="/usr/bin/xwallpaper"), \
-                mock.patch.object(app, "outputs", return_value=["DP-1"]), \
-                mock.patch.object(app.subprocess, "run") as run, \
+                mock.patch.object(cli.shutil, "which", return_value="/usr/bin/xwallpaper"), \
+                mock.patch.object(cli, "outputs", return_value=["DP-1"]), \
+                mock.patch.object(cli.subprocess, "run") as run, \
                 mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
             self.assertEqual(app.restore(), 1)
             run.assert_not_called()
+
+    def test_restore_applies_a_valid_saved_wallpaper(self):
+        with tempfile.NamedTemporaryFile(suffix=".png") as image, \
+                mock.patch.object(cli, "load_settings", return_value={
+                    "last_wallpaper": image.name,
+                    "mode": "maximize",
+                    "output": "All displays",
+                }), \
+                mock.patch.object(cli.shutil, "which", return_value="/usr/bin/xwallpaper"), \
+                mock.patch.object(cli.subprocess, "run") as run, \
+                mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
+            run.return_value.returncode = 0
+            self.assertEqual(app.restore(), 0)
+            run.assert_called_once_with(
+                ["xwallpaper", "--maximize", image.name], timeout=10
+            )
 
 
 if __name__ == "__main__":
