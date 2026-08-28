@@ -175,6 +175,9 @@ class Window(Gtk.ApplicationWindow):
             self.scan()
         return GLib.SOURCE_REMOVE
 
+    def _folder_name(self):
+        return self.folder.name or "Selected folder"
+
     def _restore_controls(self):
         mode = self.settings.get("mode", "zoom")
         self.mode.set_active_id(mode if mode in {item[0] for item in MODES} else "zoom")
@@ -255,7 +258,7 @@ class Window(Gtk.ApplicationWindow):
         self.folder_button.set_label(self.folder.name or str(self.folder))
         self.folder_button.set_tooltip_text(str(self.folder))
         self.stack.set_visible_child_name("gallery")
-        self.status.set_text(f"Scanning {self.folder}…")
+        self.status.set_text(f"Scanning {self._folder_name()}…")
         threading.Thread(
             target=self._scan_worker,
             args=(self.folder, self.recursive.get_active(), scan_id),
@@ -275,7 +278,7 @@ class Window(Gtk.ApplicationWindow):
             self.empty_title.set_markup("<big><b>No wallpaper images found</b></big>")
             self.empty_detail.set_text("Choose another folder or include subfolders.")
             self.stack.set_visible_child_name("empty")
-            self.status.set_text(f"0 images in {self.folder}")
+            self.status.set_text(f"0 images in {self._folder_name()}")
             return GLib.SOURCE_REMOVE
         self.stack.set_visible_child_name("gallery")
         self.status.set_text(f"Loading {len(paths)} images…")
@@ -317,7 +320,10 @@ class Window(Gtk.ApplicationWindow):
 
     def _finish_thumbnails(self, scan_id):
         if scan_id == self.scan_id:
-            self.status.set_text(f"{self.loaded} images in {self.folder}")
+            noun = "image" if self.loaded == 1 else "images"
+            self.status.set_text(
+                f"{self.loaded} {noun} in {self._folder_name()}"
+            )
         return GLib.SOURCE_REMOVE
 
     def _selection_changed(self, flow):
@@ -325,7 +331,7 @@ class Window(Gtk.ApplicationWindow):
         self.selected = children[0].wallpaper_path if children else None
         self.apply_button.set_sensitive(self.selected is not None)
         if self.selected:
-            self.status.set_text(str(self.selected))
+            self.status.set_text(self.selected.name)
 
     def apply(self):
         if not self.selected:

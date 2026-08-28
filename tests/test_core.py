@@ -98,6 +98,10 @@ class WallpaperTests(unittest.TestCase):
                 {"top.png", "nested/inside.jpg"},
             )
 
+    def test_folder_status_does_not_expose_the_absolute_path(self):
+        window = mock.Mock(folder=Path("/private/location/Pictures"))
+        self.assertEqual(app.Window._folder_name(window), "Pictures")
+
     @mock.patch.object(system.shutil, "which", return_value="/usr/bin/xrandr")
     @mock.patch.object(system.subprocess, "run")
     def test_output_detection_ignores_disconnected_outputs(self, run, _which):
