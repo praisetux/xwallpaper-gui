@@ -72,3 +72,41 @@ def save_xinitrc_command(command, path=None):
     lines[insertion:insertion] = block
 
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def dwm_autostart_path():
+    """Return the per-user autostart script used by current DWM releases."""
+    data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return base / "dwm" / "autostart.sh"
+
+
+def save_dwm_autostart_command(command, path=None):
+    """Add or replace our command in DWM's non-blocking autostart script."""
+    target = Path(path) if path is not None else dwm_autostart_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = "#!/bin/sh\n"
+
+    lines = existing.splitlines()
+    try:
+        begin = lines.index(XINIT_BEGIN)
+        end = lines.index(XINIT_END, begin + 1)
+    except ValueError:
+        pass
+    else:
+        del lines[begin:end + 1]
+
+    while lines and not lines[-1]:
+        lines.pop()
+    if lines:
+        lines.append("")
+    lines.extend([
+        XINIT_BEGIN,
+        shlex.join([str(item) for item in command]),
+        XINIT_END,
+    ])
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    target.chmod(target.stat().st_mode | 0o100)

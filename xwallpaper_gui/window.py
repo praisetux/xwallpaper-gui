@@ -9,7 +9,10 @@ import threading
 from .constants import EXTENSIONS, MODES
 from .gtk import Gdk, GdkPixbuf, GLib, Gtk
 from .settings import load_settings, save_settings
-from .system import outputs, save_xinitrc_command, wallpaper_command
+from .system import (
+    outputs, save_dwm_autostart_command, save_xinitrc_command,
+    wallpaper_command,
+)
 
 
 class Window(Gtk.ApplicationWindow):
@@ -362,9 +365,17 @@ class Window(Gtk.ApplicationWindow):
             mode=self.mode.get_active_id(), output=output,
             recursive=self.recursive.get_active())
         self.remember()
-        try:
-            save_xinitrc_command(command)
-        except OSError as error:
-            self.message(f"Wallpaper applied, but could not update ~/.xinitrc: {error}")
+        persistence_errors = []
+        for destination, save_command in (
+            ("~/.xinitrc", save_xinitrc_command),
+            ("DWM autostart", save_dwm_autostart_command),
+        ):
+            try:
+                save_command(command)
+            except OSError as error:
+                persistence_errors.append(f"{destination}: {error}")
+        if persistence_errors:
+            self.message("Wallpaper applied, but startup could not be updated: " +
+                         "; ".join(persistence_errors))
             return
         self.message(f"Applied {self.selected.name}", Gtk.MessageType.INFO)

@@ -99,6 +99,35 @@ class WallpaperTests(unittest.TestCase):
             self.assertEqual(contents.count("# BEGIN xwallpaper-gui wallpaper"), 1)
             self.assertIn("xwallpaper --tile new.png", contents)
 
+    def test_dwm_autostart_is_created_and_made_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            autostart = Path(directory) / "dwm" / "autostart.sh"
+            app.save_dwm_autostart_command(
+                ["xwallpaper", "--zoom", "/tmp/a wallpaper.png"], autostart
+            )
+            self.assertEqual(autostart.read_text(encoding="utf-8"),
+                "#!/bin/sh\n\n"
+                "# BEGIN xwallpaper-gui wallpaper\n"
+                "xwallpaper --zoom '/tmp/a wallpaper.png'\n"
+                "# END xwallpaper-gui wallpaper\n")
+            self.assertTrue(autostart.stat().st_mode & 0o100)
+
+    def test_dwm_autostart_preserves_existing_commands_and_replaces_ours(self):
+        with tempfile.TemporaryDirectory() as directory:
+            autostart = Path(directory) / "autostart.sh"
+            autostart.write_text("#!/bin/sh\npicom &\n", encoding="utf-8")
+            app.save_dwm_autostart_command(
+                ["xwallpaper", "--zoom", "old.png"], autostart
+            )
+            app.save_dwm_autostart_command(
+                ["xwallpaper", "--tile", "new.png"], autostart
+            )
+            contents = autostart.read_text(encoding="utf-8")
+            self.assertIn("picom &", contents)
+            self.assertNotIn("old.png", contents)
+            self.assertEqual(contents.count("# BEGIN xwallpaper-gui wallpaper"), 1)
+            self.assertIn("xwallpaper --tile new.png", contents)
+
     def test_folder_scan_filters_and_sorts(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
