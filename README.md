@@ -16,6 +16,10 @@ its images in a thumbnail gallery, and apply one using `xwallpaper`.
 
 The app does not copy, move, or modify wallpaper files.
 
+## Screenshot
+
+![XWallpaper GUI showing a wallpaper folder](screenshots/xwallpaper-gui.png)
+
 ## Install
 
 XWallpaper GUI is installed from this GitHub repository. It is **not** currently
