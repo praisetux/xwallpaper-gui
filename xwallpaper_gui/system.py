@@ -40,6 +40,21 @@ XINIT_BEGIN = "# BEGIN xwallpaper-gui wallpaper"
 XINIT_END = "# END xwallpaper-gui wallpaper"
 
 
+def _remove_managed_block(lines):
+    """Drop our block and the blank lines that separated it from its neighbours."""
+    try:
+        begin = lines.index(XINIT_BEGIN)
+        end = lines.index(XINIT_END, begin + 1)
+    except ValueError:
+        return
+    del lines[begin:end + 1]
+    while begin < len(lines) and not lines[begin]:
+        del lines[begin]
+    while begin and not lines[begin - 1]:
+        del lines[begin - 1]
+        begin -= 1
+
+
 def save_xinitrc_command(command, path=None):
     """Add or replace the wallpaper command managed by this application."""
     target = Path(path) if path is not None else Path.home() / ".xinitrc"
@@ -49,13 +64,7 @@ def save_xinitrc_command(command, path=None):
         existing = ""
 
     lines = existing.splitlines()
-    try:
-        begin = lines.index(XINIT_BEGIN)
-        end = lines.index(XINIT_END, begin + 1)
-    except ValueError:
-        pass
-    else:
-        del lines[begin:end + 1]
+    _remove_managed_block(lines)
 
     while lines and not lines[-1]:
         lines.pop()
@@ -91,13 +100,7 @@ def save_dwm_autostart_command(command, path=None):
         existing = "#!/bin/sh\n"
 
     lines = existing.splitlines()
-    try:
-        begin = lines.index(XINIT_BEGIN)
-        end = lines.index(XINIT_END, begin + 1)
-    except ValueError:
-        pass
-    else:
-        del lines[begin:end + 1]
+    _remove_managed_block(lines)
 
     while lines and not lines[-1]:
         lines.pop()

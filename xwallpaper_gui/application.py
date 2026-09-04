@@ -12,6 +12,4 @@ class Application(Gtk.Application):
     def do_activate(self):
         window = self.get_active_window() or Window(self)
         window.show_all()
-        if not window.info_label.get_text():
-            window.info.hide()
         window.present()
