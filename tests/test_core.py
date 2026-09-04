@@ -7,7 +7,7 @@ from unittest import mock
 
 
 import xwallpaper_gui as app
-from xwallpaper_gui import cli, system
+from xwallpaper_gui import cli, system, window as window_module
 
 
 class SettingsTests(unittest.TestCase):
@@ -151,6 +151,28 @@ class WallpaperTests(unittest.TestCase):
                 {"top.png", "nested/inside.jpg"},
             )
 
+    def test_repeated_xinitrc_updates_do_not_accumulate_blank_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xinitrc = Path(directory) / ".xinitrc"
+            xinitrc.write_text("#!/bin/sh\nexec openbox-session\n", encoding="utf-8")
+            app.save_xinitrc_command(["xwallpaper", "--zoom", "one.png"], xinitrc)
+            first = xinitrc.read_text(encoding="utf-8")
+            for name in ("two.png", "three.png", "four.png"):
+                app.save_xinitrc_command(["xwallpaper", "--zoom", name], xinitrc)
+            self.assertEqual(xinitrc.read_text(encoding="utf-8"),
+                             first.replace("one.png", "four.png"))
+
+    def test_repeated_dwm_updates_do_not_accumulate_blank_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            autostart = Path(directory) / "autostart.sh"
+            autostart.write_text("#!/bin/sh\npicom &\n", encoding="utf-8")
+            app.save_dwm_autostart_command(["xwallpaper", "--zoom", "one.png"], autostart)
+            first = autostart.read_text(encoding="utf-8")
+            for name in ("two.png", "three.png"):
+                app.save_dwm_autostart_command(["xwallpaper", "--zoom", name], autostart)
+            self.assertEqual(autostart.read_text(encoding="utf-8"),
+                             first.replace("one.png", "three.png"))
+
     def test_folder_status_does_not_expose_the_absolute_path(self):
         window = mock.Mock(folder=Path("/private/location/Pictures"))
         self.assertEqual(app.Window._folder_name(window), "Pictures")
@@ -194,6 +216,80 @@ class WallpaperTests(unittest.TestCase):
             run.assert_called_once_with(
                 ["xwallpaper", "--maximize", image.name], timeout=10
             )
+
+
+class WindowControlTests(unittest.TestCase):
+    def test_message_shows_the_bar_and_its_label(self):
+        window = mock.Mock()
+        app.Window.message(window, "something happened")
+        window.info_label.set_text.assert_called_once_with("something happened")
+        window.info_label.show.assert_called_once_with()
+        window.info.show.assert_called_once_with()
+        window.info.show_all.assert_not_called()
+
+    def test_refresh_selects_a_connected_saved_display(self):
+        window = mock.Mock(settings={"output": "DP-1"}, _updating_controls=False)
+        with mock.patch.object(window_module, "outputs", return_value=["DP-1", "HDMI-1"]):
+            self.assertEqual(app.Window._refresh_outputs(window), ["DP-1", "HDMI-1"])
+        window.output.set_active_id.assert_called_once_with("DP-1")
+
+    def test_refresh_falls_back_without_forgetting_the_saved_display(self):
+        settings = {"output": "DP-9"}
+        window = mock.Mock(settings=settings, _updating_controls=False)
+        with mock.patch.object(window_module, "outputs", return_value=["DP-1"]):
+            app.Window._refresh_outputs(window)
+        window.output.set_active_id.assert_called_once_with("All displays")
+        self.assertEqual(settings["output"], "DP-9")
+
+    def test_programmatic_control_updates_are_not_persisted(self):
+        settings = {"mode": "tile", "output": "DP-9", "recursive": True}
+        window = mock.Mock(settings=settings, _updating_controls=True)
+        app.Window._mode_changed(window, None)
+        app.Window._output_changed(window, None)
+        app.Window._recursive_changed(window, mock.Mock())
+        window.remember.assert_not_called()
+        self.assertEqual(settings, {"mode": "tile", "output": "DP-9", "recursive": True})
+
+    def test_a_chosen_display_is_persisted(self):
+        settings = {}
+        window = mock.Mock(settings=settings, _updating_controls=False)
+        window.output.get_active_id.return_value = "HDMI-1"
+        app.Window._output_changed(window, None)
+        self.assertEqual(settings["output"], "HDMI-1")
+        window.remember.assert_called_once_with()
+
+    @staticmethod
+    def _apply_window(output):
+        window = mock.Mock(selected=Path("/pictures/wall.png"),
+                           folder=Path("/pictures"), settings={})
+        window.output.get_active_id.return_value = output
+        window.mode.get_active_id.return_value = "zoom"
+        window.recursive.get_active.return_value = False
+        window._refresh_outputs.return_value = ["DP-1"]
+        return window
+
+    def test_apply_refreshes_displays_even_for_all_displays(self):
+        window = self._apply_window("All displays")
+        with mock.patch.object(window_module.shutil, "which", return_value="/bin/xwallpaper"), \
+                mock.patch.object(window_module.subprocess, "run") as run, \
+                mock.patch.object(window_module, "save_xinitrc_command") as xinitrc, \
+                mock.patch.object(window_module, "save_dwm_autostart_command") as autostart, \
+                mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
+            run.return_value.returncode = 0
+            app.Window.apply(window)
+        window._refresh_outputs.assert_called_once_with()
+        self.assertEqual(run.call_args[0][0],
+                         ["xwallpaper", "--zoom", "/pictures/wall.png"])
+        xinitrc.assert_called_once()
+        autostart.assert_called_once()
+
+    def test_apply_refuses_a_disconnected_display(self):
+        window = self._apply_window("DP-9")
+        with mock.patch.object(window_module.shutil, "which", return_value="/bin/xwallpaper"), \
+                mock.patch.object(window_module.subprocess, "run") as run, \
+                mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
+            app.Window.apply(window)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ class Window(Gtk.ApplicationWindow):
         self.scan_id = 0
         self.loaded = 0
         self.dependency_warning = not shutil.which("xwallpaper")
+        self._updating_controls = False
         self._build()
         self._restore_controls()
         GLib.idle_add(self._startup)
@@ -41,8 +42,8 @@ class Window(Gtk.ApplicationWindow):
         self.folder_button.connect("clicked", self._choose_folder)
         header.pack_start(self.folder_button)
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
-        refresh.set_tooltip_text("Rescan folder")
-        refresh.connect("clicked", lambda _button: self.scan())
+        refresh.set_tooltip_text("Rescan the folder and connected displays")
+        refresh.connect("clicked", lambda _button: self._refresh())
         header.pack_start(refresh)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -78,17 +79,14 @@ class Window(Gtk.ApplicationWindow):
         self.mode = Gtk.ComboBoxText()
         for key, label in MODES:
             self.mode.append(key, label)
-        self.mode.connect("changed", self._controls_changed)
+        self.mode.connect("changed", self._mode_changed)
         layout_group.pack_start(self.mode, False, False, 0)
 
         display_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         sidebar.pack_start(display_group, False, False, 0)
         display_group.pack_start(self._field_label("DISPLAY"), False, False, 0)
         self.output = Gtk.ComboBoxText()
-        self.output.append("All displays", "All displays")
-        for name in outputs():
-            self.output.append(name, name)
-        self.output.connect("changed", self._controls_changed)
+        self.output.connect("changed", self._output_changed)
         display_group.pack_start(self.output, False, False, 0)
 
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -182,26 +180,41 @@ class Window(Gtk.ApplicationWindow):
         return self.folder.name or "Selected folder"
 
     def _restore_controls(self):
-        mode = self.settings.get("mode", "zoom")
-        self.mode.set_active_id(mode if mode in {item[0] for item in MODES} else "zoom")
-        if not self.output.set_active_id(self.settings.get("output", "All displays")):
-            self.output.set_active_id("All displays")
-        self.recursive.set_active(bool(self.settings.get("recursive")))
+        self._updating_controls = True
+        try:
+            mode = self.settings.get("mode", "zoom")
+            self.mode.set_active_id(
+                mode if mode in {item[0] for item in MODES} else "zoom")
+            self.recursive.set_active(bool(self.settings.get("recursive")))
+        finally:
+            self._updating_controls = False
+        self._refresh_outputs()
 
     def _refresh_outputs(self):
-        selected = self.output.get_active_id() or self.settings.get("output", "All displays")
+        """Rebuild the display list, keeping the saved preference if it is connected."""
+        preferred = self.settings.get("output", "All displays")
         available = outputs()
-        self.output.remove_all()
-        self.output.append("All displays", "All displays")
-        for name in available:
-            self.output.append(name, name)
-        self.output.set_active_id(selected if selected in available else "All displays")
+        self._updating_controls = True
+        try:
+            self.output.remove_all()
+            self.output.append("All displays", "All displays")
+            for name in available:
+                self.output.append(name, name)
+            self.output.set_active_id(
+                preferred if preferred in available else "All displays")
+        finally:
+            self._updating_controls = False
         return available
+
+    def _refresh(self):
+        self._refresh_outputs()
+        self.scan()
 
     def message(self, text, kind=Gtk.MessageType.WARNING):
         self.info.set_message_type(kind)
         self.info_label.set_text(text)
-        self.info.show_all()
+        self.info_label.show()
+        self.info.show()
 
     def remember(self):
         try:
@@ -209,12 +222,21 @@ class Window(Gtk.ApplicationWindow):
         except OSError as error:
             self.message(f"Could not save settings: {error}")
 
-    def _controls_changed(self, _widget):
+    def _mode_changed(self, _widget):
+        if self._updating_controls:
+            return
         self.settings["mode"] = self.mode.get_active_id() or "zoom"
+        self.remember()
+
+    def _output_changed(self, _widget):
+        if self._updating_controls:
+            return
         self.settings["output"] = self.output.get_active_id() or "All displays"
         self.remember()
 
     def _recursive_changed(self, widget):
+        if self._updating_controls:
+            return
         self.settings["recursive"] = widget.get_active()
         self.remember()
         if self.folder:
@@ -346,7 +368,8 @@ class Window(Gtk.ApplicationWindow):
             self.message("No X11 display was detected; xwallpaper requires X11.")
             return
         output = self.output.get_active_id() or "All displays"
-        if output != "All displays" and output not in self._refresh_outputs():
+        available = self._refresh_outputs()
+        if output != "All displays" and output not in available:
             self.message(f"Display {output} is no longer connected. Choose another display.")
             return
         command = wallpaper_command(
