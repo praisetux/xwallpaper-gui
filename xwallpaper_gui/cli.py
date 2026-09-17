@@ -24,13 +24,18 @@ def restore():
     if not image.is_file():
         print("the saved wallpaper no longer exists", file=sys.stderr)
         return 1
-    output = settings.get("output", "All displays")
+    # Browsing controls are saved immediately, but restoration must reproduce
+    # the last command that actually succeeded.
+    output = settings.get("last_output", settings.get("output", "All displays"))
     if output != "All displays" and output not in outputs():
         print(f"the saved display is no longer connected: {output}", file=sys.stderr)
         return 1
     try:
         return subprocess.run(
-            wallpaper_command(image, settings.get("mode", "zoom"), output),
+            wallpaper_command(
+                image, settings.get("last_mode", settings.get("mode", "zoom")),
+                output,
+            ),
             timeout=10,
         ).returncode
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:

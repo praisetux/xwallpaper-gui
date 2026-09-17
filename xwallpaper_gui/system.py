@@ -56,12 +56,16 @@ def _remove_managed_block(lines):
 
 
 def save_xinitrc_command(command, path=None):
-    """Add or replace the wallpaper command managed by this application."""
+    """Add or replace our command in an existing user xinitrc.
+
+    Creating an xinitrc containing only a wallpaper command would override the
+    system xinitrc and leave ``startx`` with no desktop session to launch.
+    """
     target = Path(path) if path is not None else Path.home() / ".xinitrc"
     try:
         existing = target.read_text(encoding="utf-8")
     except FileNotFoundError:
-        existing = ""
+        return False
 
     lines = existing.splitlines()
     _remove_managed_block(lines)
@@ -69,11 +73,10 @@ def save_xinitrc_command(command, path=None):
     while lines and not lines[-1]:
         lines.pop()
     block = [XINIT_BEGIN, shlex.join([str(item) for item in command]), XINIT_END]
-    insertion = next(
-        (index for index, line in enumerate(lines)
-         if line.lstrip().startswith("exec ")),
-        len(lines),
-    )
+    # Put the command immediately after the interpreter line. Looking for the
+    # first ``exec`` is unsafe because it may be nested in a shell conditional,
+    # which would make wallpaper restoration conditional as well.
+    insertion = 1 if lines and lines[0].startswith("#!") else 0
     if insertion and lines[insertion - 1]:
         block.insert(0, "")
     if insertion < len(lines) and lines[insertion]:
@@ -81,6 +84,7 @@ def save_xinitrc_command(command, path=None):
     lines[insertion:insertion] = block
 
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
 
 
 def dwm_autostart_path():
