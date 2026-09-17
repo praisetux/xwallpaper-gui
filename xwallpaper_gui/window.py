@@ -24,7 +24,9 @@ class Window(Gtk.ApplicationWindow):
         self.folder = None
         self.selected = None
         self.scan_id = 0
+        self.output_refresh_id = 0
         self.loaded = 0
+        self.applying = False
         self.dependency_warning = not shutil.which("xwallpaper")
         self._updating_controls = False
         self._build()
@@ -41,10 +43,12 @@ class Window(Gtk.ApplicationWindow):
         self.folder_button.set_tooltip_text("Choose a wallpaper folder")
         self.folder_button.connect("clicked", self._choose_folder)
         header.pack_start(self.folder_button)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
-        refresh.set_tooltip_text("Rescan the folder and connected displays")
-        refresh.connect("clicked", lambda _button: self._refresh())
-        header.pack_start(refresh)
+        self.refresh_button = Gtk.Button.new_from_icon_name(
+            "view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        self.refresh_button.set_tooltip_text(
+            "Rescan the folder and connected displays")
+        self.refresh_button.connect("clicked", lambda _button: self._refresh())
+        header.pack_start(self.refresh_button)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
@@ -116,6 +120,7 @@ class Window(Gtk.ApplicationWindow):
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE,
                                 column_spacing=12, row_spacing=12,
                                 min_children_per_line=1, max_children_per_line=20)
+        self.flow.set_activate_on_single_click(False)
         self.flow.set_border_width(12)
         self.flow.connect("selected-children-changed", self._selection_changed)
         self.flow.connect("child-activated", lambda *_args: self.apply())
@@ -191,9 +196,24 @@ class Window(Gtk.ApplicationWindow):
         self._refresh_outputs()
 
     def _refresh_outputs(self):
-        """Rebuild the display list, keeping the saved preference if it is connected."""
-        preferred = self.settings.get("output", "All displays")
-        available = outputs()
+        """Refresh displays without making GTK wait for xrandr."""
+        self.output_refresh_id += 1
+        refresh_id = self.output_refresh_id
+        threading.Thread(
+            target=self._outputs_worker, args=(refresh_id,), daemon=True
+        ).start()
+
+    def _outputs_worker(self, refresh_id):
+        GLib.idle_add(self._outputs_ready, outputs(), refresh_id)
+
+    def _outputs_ready(self, available, refresh_id):
+        if refresh_id != self.output_refresh_id:
+            return GLib.SOURCE_REMOVE
+        self._replace_outputs(available, self.settings.get("output", "All displays"))
+        return GLib.SOURCE_REMOVE
+
+    def _replace_outputs(self, available, preferred):
+        """Rebuild the display control on GTK's main thread."""
         self._updating_controls = True
         try:
             self.output.remove_all()
@@ -204,7 +224,6 @@ class Window(Gtk.ApplicationWindow):
                 preferred if preferred in available else "All displays")
         finally:
             self._updating_controls = False
-        return available
 
     def _refresh(self):
         self._refresh_outputs()
@@ -354,12 +373,13 @@ class Window(Gtk.ApplicationWindow):
     def _selection_changed(self, flow):
         children = flow.get_selected_children()
         self.selected = children[0].wallpaper_path if children else None
-        self.apply_button.set_sensitive(self.selected is not None)
+        self.apply_button.set_sensitive(
+            self.selected is not None and not self.applying)
         if self.selected:
             self.status.set_text(self.selected.name)
 
     def apply(self):
-        if not self.selected:
+        if not self.selected or self.applying:
             return
         if not shutil.which("xwallpaper"):
             self.message("Install xwallpaper with your distribution's package manager first.")
@@ -367,38 +387,80 @@ class Window(Gtk.ApplicationWindow):
         if not os.environ.get("DISPLAY"):
             self.message("No X11 display was detected; xwallpaper requires X11.")
             return
+        selected = self.selected
+        folder = self.folder
+        mode = self.mode.get_active_id() or "zoom"
         output = self.output.get_active_id() or "All displays"
-        available = self._refresh_outputs()
-        if output != "All displays" and output not in available:
-            self.message(f"Display {output} is no longer connected. Choose another display.")
-            return
-        command = wallpaper_command(
-            self.selected, self.mode.get_active_id() or "zoom", output)
-        try:
-            result = subprocess.run(command,
-                capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            self.message(f"Could not run xwallpaper: {error}")
-            return
-        if result.returncode:
-            self.message("Could not apply wallpaper: " +
-                         (result.stderr.strip() or "unknown xwallpaper error"))
-            return
-        self.settings.update(folder=str(self.folder), last_wallpaper=str(self.selected),
-            mode=self.mode.get_active_id(), output=output,
-            recursive=self.recursive.get_active())
-        self.remember()
-        persistence_errors = []
-        for destination, save_command in (
-            ("~/.xinitrc", save_xinitrc_command),
-            ("DWM autostart", save_dwm_autostart_command),
+        self._set_apply_busy(True)
+        self.status.set_text(f"Applying {selected.name}…")
+        threading.Thread(
+            target=self._apply_worker,
+            args=(selected, folder, mode, output),
+            daemon=True,
+        ).start()
+
+    def _set_apply_busy(self, busy):
+        self.applying = busy
+        for widget in (
+            self.folder_button, self.refresh_button, self.mode, self.output,
+            self.recursive, self.flow,
         ):
+            widget.set_sensitive(not busy)
+        self.apply_button.set_sensitive(not busy and self.selected is not None)
+
+    def _apply_worker(self, selected, folder, mode, output):
+        available = outputs()
+        error = None
+        persistence_errors = []
+        command = None
+        if output != "All displays" and output not in available:
+            error = f"Display {output} is no longer connected. Choose another display."
+        else:
             try:
-                save_command(command)
-            except OSError as error:
-                persistence_errors.append(f"{destination}: {error}")
+                command = wallpaper_command(selected, mode, output)
+                result = subprocess.run(
+                    command, capture_output=True, text=True, timeout=10)
+            except (ValueError, OSError, subprocess.TimeoutExpired) as caught:
+                error = f"Could not run xwallpaper: {caught}"
+            else:
+                if result.returncode:
+                    error = ("Could not apply wallpaper: " +
+                             (result.stderr.strip() or "unknown xwallpaper error"))
+
+        if command is not None and error is None:
+            for destination, save_command in (
+                ("~/.xinitrc", save_xinitrc_command),
+                ("DWM autostart", save_dwm_autostart_command),
+            ):
+                try:
+                    save_command(command)
+                except OSError as caught:
+                    persistence_errors.append(f"{destination}: {caught}")
+
+        GLib.idle_add(
+            self._apply_ready, selected, folder, mode, output, available,
+            error, persistence_errors,
+        )
+
+    def _apply_ready(self, selected, folder, mode, output, available, error,
+                     persistence_errors):
+        self._replace_outputs(available, output)
+        self._set_apply_busy(False)
+        if error:
+            self.status.set_text(selected.name)
+            self.message(error)
+            return GLib.SOURCE_REMOVE
+
+        self.settings.update(
+            folder=str(folder), last_wallpaper=str(selected), mode=mode,
+            output=output, last_mode=mode, last_output=output,
+            recursive=self.recursive.get_active(),
+        )
+        self.remember()
+        self.status.set_text(selected.name)
         if persistence_errors:
             self.message("Wallpaper applied, but startup could not be updated: " +
                          "; ".join(persistence_errors))
-            return
-        self.message(f"Applied {self.selected.name}", Gtk.MessageType.INFO)
+        else:
+            self.message(f"Applied {selected.name}", Gtk.MessageType.INFO)
+        return GLib.SOURCE_REMOVE

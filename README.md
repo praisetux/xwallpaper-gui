@@ -14,8 +14,8 @@ its images in a thumbnail gallery, and apply one using `xwallpaper`.
 - Supports all displays or one display detected through `xrandr`.
 - Offers zoom, maximize, stretch, centre, and tile layouts.
 - Saves the last wallpaper, layout, display, and folder.
-- Adds the selected `xwallpaper` command to `~/.xinitrc` so it is restored
-  when an X11 session is started with `startx`.
+- Adds the selected `xwallpaper` command to an existing `~/.xinitrc` so it is
+  restored when an X11 session is started with `startx`.
 - Adds the command to DWM's per-user autostart script, including when DWM is
   passed directly to `startx` and `~/.xinitrc` is bypassed.
 - Supports non-interactive restoration with `--restore` for other startup systems.
@@ -80,9 +80,11 @@ To remove the executable and menu entry:
 
 Uninstalling keeps saved wallpaper preferences.
 
-Each successful Apply updates a marked block in `~/.xinitrc`. Existing content
-is preserved and repeated changes replace that block rather than adding duplicate
-commands. This takes effect for X11 sessions started through `startx`.
+Each successful Apply updates a marked block when `~/.xinitrc` already exists.
+Existing content is preserved and repeated changes replace that block rather
+than adding duplicate commands. The app deliberately does not create this file:
+a wallpaper-only `~/.xinitrc` would override the system startup script and leave
+`startx` without a desktop session to launch.
 
 The same marked block is written to
 `$XDG_DATA_HOME/dwm/autostart.sh` (normally

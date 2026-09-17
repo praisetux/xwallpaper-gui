@@ -19,11 +19,16 @@ def load_settings():
         if not isinstance(value, dict):
             return {}
         clean = {}
-        for key in ("folder", "last_wallpaper", "output"):
+        for key in (
+            "folder", "last_wallpaper", "output", "last_output",
+        ):
             if isinstance(value.get(key), str):
                 clean[key] = value[key]
-        if value.get("mode") in {item[0] for item in MODES}:
-            clean["mode"] = value["mode"]
+        valid_modes = {item[0] for item in MODES}
+        for key in ("mode", "last_mode"):
+            mode = value.get(key)
+            if isinstance(mode, str) and mode in valid_modes:
+                clean[key] = mode
         if isinstance(value.get("recursive"), bool):
             clean["recursive"] = value["recursive"]
         return clean

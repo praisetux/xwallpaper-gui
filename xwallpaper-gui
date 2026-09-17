@@ -9,7 +9,8 @@ import sys
 try:
     from xwallpaper_gui import main
 except ModuleNotFoundError:
-    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    configured = os.environ.get("XDG_DATA_HOME")
+    data_home = Path(configured) if configured else Path.home() / ".local/share"
     sys.path.insert(0, str(data_home / "xwallpaper-gui"))
     from xwallpaper_gui import main
 
