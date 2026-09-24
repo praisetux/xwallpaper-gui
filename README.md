@@ -24,7 +24,7 @@ The app does not copy, move, or modify wallpaper files.
 
 ## Install
 
-Open a terminal and run:
+In an **X11 session**, open a terminal and run:
 
 ```sh
 git clone https://github.com/praisetux/xwallpaper-gui.git
@@ -32,22 +32,27 @@ cd xwallpaper-gui
 ./install.sh
 ```
 
-The installer checks everything the app needs. On Debian, Ubuntu, Linux Mint,
-and Arch-based systems, it can offer to install missing system dependencies.
-Those packages are Python, GTK, `xwallpaper`, and `xrandr`—not XWallpaper GUI
-itself. On other distributions it lists what is missing without guessing an
-unsafe or unavailable package command.
+Run `./install.sh` as your normal user, **without `sudo`**. It checks the
+requirements and installs the app for your account. If dependencies are
+missing, it offers to install them on Debian, Ubuntu, Linux Mint, and Arch-based
+systems; this step may ask for your administrator password.
 
-Once setup finishes, open the desktop application menu and search for
-**XWallpaper GUI**. The app installation is user-local and places:
+When you see **Ready!**, open **XWallpaper GUI** from your application menu,
+or use the launch command printed by the installer.
 
-- The executable at `~/.local/bin/xwallpaper-gui`.
-- The application modules at `~/.local/share/xwallpaper-gui/`.
-- The menu launcher at
-  `~/.local/share/applications/io.github.xwallpaper_gui.desktop`.
+If you don't have Git, download the repository using GitHub's **Code → Download
+ZIP**, extract it, and run `./install.sh` from the extracted folder.
 
-No terminal command is needed for normal use after installation. Some
-application menus take a few seconds to notice a new launcher.
+### Troubleshooting
+
+- Run `./install.sh check` to see missing requirements and installation guidance.
+- On other distributions, install the listed dependencies using your package manager.
+- If the app hasn't appeared in your menu yet, use the printed launch command.
+- XWallpaper GUI requires X11; it cannot set a Wayland desktop's wallpaper.
+
+The app itself is installed from this repository, not a distribution package.
+The executable is stored in `~/.local/bin`, and the modules and menu entry are
+stored under `~/.local/share` (or your configured XDG locations).
 
 ### Update
 
@@ -60,6 +65,7 @@ with one command:
 
 The updater fast-forwards the Git checkout and installs the refreshed files.
 It stops without changing anything if the checkout contains uncommitted work.
+If you downloaded a ZIP, download a fresh copy and run its `./install.sh` again.
 
 ### Requirements
 

@@ -12,6 +12,10 @@ DESKTOP_PATH="$APPLICATIONS_DIR/io.github.xwallpaper_gui.desktop"
 
 usage() {
     printf 'Usage: %s [install|update|uninstall|check]\n' "$0"
+    printf '\nRun without arguments to install for your user account. No sudo needed.\n'
+    printf '  update     Download updates and reinstall.\n'
+    printf '  uninstall  Remove the app and keep your preferences.\n'
+    printf '  check      Check requirements and show how to install missing ones.\n'
 }
 
 dependency_status() {
@@ -48,19 +52,28 @@ dependency_command() {
     esac
 }
 
+show_missing_dependencies() {
+    printf 'Missing requirements:%s\n' "$MISSING"
+    command=""
+    if command=$(dependency_command); then
+        printf 'Install them with:\n  %s\n' "$command"
+    else
+        printf 'Install Python 3, GTK 3 with PyGObject, xwallpaper, and xrandr\n'
+        printf 'using your system package manager.\n'
+    fi
+}
+
 check_dependencies() {
     dependency_status
     if [ -z "$MISSING" ]; then
         return 0
     fi
 
-    printf 'Missing required components:%s\n' "$MISSING"
-    if command=$(dependency_command); then
-        printf '\nThese are system dependencies, not XWallpaper GUI itself.\n'
-        printf 'Recommended command:\n  %s\n' "$command"
+    show_missing_dependencies
+    if [ -n "$command" ]; then
         if [ -t 0 ]; then
             printf '\nInstall these dependencies now? [y/N] '
-            read -r answer
+            read -r answer || answer=""
             case "$answer" in
                 y|Y|yes|YES)
                     sh -c "$command"
@@ -68,13 +81,10 @@ check_dependencies() {
                     ;;
             esac
         fi
-    else
-        printf '\nInstall Python 3, GTK 3 with PyGObject, xwallpaper, and xrandr\n'
-        printf 'using your system package manager, then run this installer again.\n'
     fi
 
     if [ -n "$MISSING" ]; then
-        printf '\nSetup stopped because the app would not be usable yet.\n' >&2
+        printf '\nInstall the requirements above, then retry:\n  %q\n' "$0" >&2
         return 1
     fi
 }
@@ -86,8 +96,10 @@ refresh_menu() {
 }
 
 install_app() {
+    printf 'Checking requirements...\n'
     check_dependencies
 
+    printf 'Installing XWallpaper GUI...\n'
     install -d "$BIN_DIR" "$APPLICATIONS_DIR" "$APP_DATA_DIR/xwallpaper_gui"
     install -m 755 "$SCRIPT_DIR/xwallpaper-gui" "$INSTALL_PATH"
     for module in "$SCRIPT_DIR"/xwallpaper_gui/*.py; do
@@ -99,8 +111,8 @@ install_app() {
     chmod 644 "$DESKTOP_PATH"
     refresh_menu
 
-    printf 'Installed XWallpaper GUI.\n'
-    printf 'Open your application menu and search for “XWallpaper GUI”.\n'
+    printf '\nReady! Open “XWallpaper GUI” from your application menu.\n'
+    printf 'Or launch it from this terminal:\n  %q\n' "$INSTALL_PATH"
 }
 
 update_app() {
@@ -133,6 +145,11 @@ uninstall_app() {
     printf 'Saved preferences were left in your configuration directory.\n'
 }
 
+if [ "$#" -gt 1 ]; then
+    usage >&2
+    exit 2
+fi
+
 case "${1:-install}" in
     install) install_app ;;
     update) update_app ;;
@@ -140,7 +157,7 @@ case "${1:-install}" in
     check)
         dependency_status
         if [ -n "$MISSING" ]; then
-            printf 'Missing:%s\n' "$MISSING"
+            show_missing_dependencies
             exit 1
         fi
         printf 'All required components are installed.\n'
