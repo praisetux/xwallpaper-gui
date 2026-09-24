@@ -24,10 +24,6 @@ The app does not copy, move, or modify wallpaper files.
 
 ## Install
 
-XWallpaper GUI is installed from this GitHub repository. It is **not** currently
-published in the Debian, Ubuntu, Arch, Fedora, or other distribution
-repositories.
-
 Open a terminal and run:
 
 ```sh
