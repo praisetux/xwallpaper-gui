@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 from pathlib import Path
 import subprocess
 import tempfile
@@ -118,10 +119,32 @@ class WallpaperTests(unittest.TestCase):
     def test_xinitrc_is_not_created_when_the_user_does_not_have_one(self):
         with tempfile.TemporaryDirectory() as directory:
             xinitrc = Path(directory) / ".xinitrc"
-            self.assertFalse(app.save_xinitrc_command(
-                ["xwallpaper", "--zoom", "wall.png"], xinitrc
-            ))
+            reason = app.save_xinitrc_command(
+                ["xwallpaper", "--zoom", "wall.png"], xinitrc)
+            self.assertIn("does not exist", reason)
             self.assertFalse(xinitrc.exists())
+
+    def test_a_sessionless_xinitrc_is_left_alone(self):
+        """An xinitrc holding only our block would start no window manager."""
+        with tempfile.TemporaryDirectory() as directory:
+            xinitrc = Path(directory) / ".xinitrc"
+            original = ("# BEGIN xwallpaper-gui wallpaper\n"
+                        "xwallpaper --zoom old.png\n"
+                        "# END xwallpaper-gui wallpaper\n")
+            xinitrc.write_text(original, encoding="utf-8")
+            reason = app.save_xinitrc_command(
+                ["xwallpaper", "--tile", "new.png"], xinitrc)
+            self.assertIn("starts no desktop session", reason)
+            self.assertEqual(xinitrc.read_text(encoding="utf-8"), original)
+
+    def test_a_real_xinitrc_is_still_updated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xinitrc = Path(directory) / ".xinitrc"
+            xinitrc.write_text("#!/bin/sh\nexec dwm\n", encoding="utf-8")
+            self.assertIsNone(app.save_xinitrc_command(
+                ["xwallpaper", "--zoom", "wall.png"], xinitrc))
+            self.assertIn("xwallpaper --zoom wall.png",
+                          xinitrc.read_text(encoding="utf-8"))
 
     def test_xinitrc_command_is_not_inserted_inside_a_conditional(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -395,6 +418,8 @@ class WindowControlTests(unittest.TestCase):
     def test_successful_apply_worker_runs_command_and_updates_startup(self):
         window = self._apply_window("All displays")
         with mock.patch.object(window_module, "outputs", return_value=["DP-1"]), \
+                mock.patch.object(window_module, "dwm_autostart_applies",
+                                  return_value=True), \
                 mock.patch.object(window_module.subprocess, "run") as run, \
                 mock.patch.object(window_module, "save_xinitrc_command") as xinitrc, \
                 mock.patch.object(window_module, "save_dwm_autostart_command") as autostart, \
@@ -424,6 +449,152 @@ class WindowControlTests(unittest.TestCase):
         self.assertEqual(window.settings["last_output"], "DP-1")
         window.remember.assert_called_once_with()
         self.assertEqual(result, window_module.GLib.SOURCE_REMOVE)
+
+
+class StartupTargetTests(unittest.TestCase):
+    def test_dwm_autostart_is_skipped_without_dwm(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(system.shutil, "which", return_value=None), \
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+            self.assertFalse(app.dwm_autostart_applies())
+
+    def test_dwm_autostart_applies_when_dwm_is_installed(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(system.shutil, "which",
+                                  return_value="/usr/bin/dwm"), \
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+            self.assertTrue(app.dwm_autostart_applies())
+
+    def test_dwm_autostart_applies_when_the_script_already_exists(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(system.shutil, "which", return_value=None), \
+                mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+            script = Path(directory) / "dwm" / "autostart.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text("#!/bin/sh\n", encoding="utf-8")
+            self.assertTrue(app.dwm_autostart_applies())
+
+    def test_apply_reports_when_no_startup_file_could_be_updated(self):
+        window = mock.Mock(selected=Path("/pictures/wall.png"),
+                           folder=Path("/pictures"), settings={}, applying=False)
+        with mock.patch.object(window_module, "outputs", return_value=["DP-1"]), \
+                mock.patch.object(window_module, "dwm_autostart_applies",
+                                  return_value=False), \
+                mock.patch.object(window_module, "save_xinitrc_command",
+                                  return_value="no xinitrc here"), \
+                mock.patch.object(window_module.subprocess, "run") as run, \
+                mock.patch.object(window_module.GLib, "idle_add") as idle_add:
+            run.return_value.returncode = 0
+            app.Window._apply_worker(
+                window, Path("/pictures/wall.png"), Path("/pictures"),
+                "zoom", "All displays")
+        self.assertIsNone(idle_add.call_args.args[-2])
+        self.assertEqual(idle_add.call_args.args[-1], ["no xinitrc here"])
+
+    def test_apply_stays_quiet_when_one_destination_succeeds(self):
+        window = mock.Mock(selected=Path("/pictures/wall.png"),
+                           folder=Path("/pictures"), settings={}, applying=False)
+        with mock.patch.object(window_module, "outputs", return_value=["DP-1"]), \
+                mock.patch.object(window_module, "dwm_autostart_applies",
+                                  return_value=False), \
+                mock.patch.object(window_module, "save_xinitrc_command",
+                                  return_value=None), \
+                mock.patch.object(window_module.subprocess, "run") as run, \
+                mock.patch.object(window_module.GLib, "idle_add") as idle_add:
+            run.return_value.returncode = 0
+            app.Window._apply_worker(
+                window, Path("/pictures/wall.png"), Path("/pictures"),
+                "zoom", "All displays")
+        self.assertEqual(idle_add.call_args.args[-1], [])
+
+
+class ScanErrorTests(unittest.TestCase):
+    @unittest.skipIf(os.geteuid() == 0, "root ignores directory permissions")
+    def test_recursive_scan_reports_an_unreadable_subfolder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "top.png").touch()
+            locked = folder / "locked"
+            locked.mkdir()
+            (locked / "hidden.png").touch()
+            locked.chmod(0o000)
+            try:
+                paths, error = app.Window._find_paths(folder, True)
+            finally:
+                locked.chmod(0o755)
+            self.assertEqual([path.name for path in paths], ["top.png"])
+            self.assertIsNotNone(error)
+            self.assertIn("Permission denied", error)
+
+    def test_a_readable_recursive_scan_reports_no_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            nested = folder / "nested"
+            nested.mkdir()
+            (folder / "top.png").touch()
+            (nested / "inside.jpg").touch()
+            paths, error = app.Window._find_paths(folder, True)
+            self.assertIsNone(error)
+            self.assertEqual(len(paths), 2)
+
+    def test_a_folder_of_undecodable_images_shows_the_empty_state(self):
+        window = mock.Mock(scan_id=4, loaded=0)
+        app.Window._finish_thumbnails(window, 4)
+        window._show_empty.assert_called_once()
+        self.assertIn("could be opened", window._show_empty.call_args.args[0])
+
+    def test_a_folder_with_thumbnails_keeps_the_gallery(self):
+        window = mock.Mock(scan_id=4, loaded=3)
+        app.Window._finish_thumbnails(window, 4)
+        window._show_empty.assert_not_called()
+
+class ThumbnailTests(unittest.TestCase):
+    @staticmethod
+    def _write_jpeg(path, width, height, orientation=None):
+        """Write a solid JPEG, optionally tagged with an EXIF orientation."""
+        pixbuf = window_module.GdkPixbuf.Pixbuf.new(
+            window_module.GdkPixbuf.Colorspace.RGB, False, 8, width, height)
+        pixbuf.fill(0x3366CCFF)
+        _, data = pixbuf.save_to_bufferv("jpeg", [], [])
+        if orientation is not None:
+            tiff = (b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", 1)
+                    + struct.pack("<HHI", 0x0112, 3, 1)
+                    + struct.pack("<HH", orientation, 0) + struct.pack("<I", 0))
+            payload = b"Exif\x00\x00" + tiff
+            app1 = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
+            data = data[:2] + app1 + data[2:]
+        Path(path).write_bytes(data)
+
+    def test_quarter_turn_orientation_still_fits_the_tile_box(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "rotated.jpg"
+            self._write_jpeg(image, 400, 300, orientation=6)
+            thumbnail = app.Window._thumbnail(image)
+            self.assertLessEqual(thumbnail.get_width(), 200)
+            self.assertLessEqual(thumbnail.get_height(), 125)
+            self.assertGreater(thumbnail.get_height(), thumbnail.get_width())
+
+    def test_upright_image_keeps_its_aspect_ratio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "wide.jpg"
+            self._write_jpeg(image, 400, 300)
+            thumbnail = app.Window._thumbnail(image)
+            self.assertEqual((thumbnail.get_width(), thumbnail.get_height()),
+                             (167, 125))
+
+    def test_a_panorama_is_bounded_by_the_tile_width(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "panorama.jpg"
+            self._write_jpeg(image, 2560, 800)
+            thumbnail = app.Window._thumbnail(image)
+            self.assertEqual(thumbnail.get_width(), 200)
+            self.assertLessEqual(thumbnail.get_height(), 125)
+
+    def test_an_undecodable_file_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            broken = Path(directory) / "broken.png"
+            broken.write_bytes(b"not an image")
+            self.assertIsNone(app.Window._thumbnail(broken))
 
 
 if __name__ == "__main__":

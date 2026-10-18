@@ -10,8 +10,8 @@ from .constants import EXTENSIONS, MODES
 from .gtk import Gdk, GdkPixbuf, GLib, Gtk
 from .settings import load_settings, save_settings
 from .system import (
-    outputs, save_dwm_autostart_command, save_xinitrc_command,
-    wallpaper_command,
+    dwm_autostart_applies, outputs, save_dwm_autostart_command,
+    save_xinitrc_command, wallpaper_command,
 )
 
 
@@ -118,10 +118,14 @@ class Window(Gtk.ApplicationWindow):
 
         scroll = Gtk.ScrolledWindow()
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE,
-                                column_spacing=12, row_spacing=12,
+                                column_spacing=14, row_spacing=14,
                                 min_children_per_line=1, max_children_per_line=20)
         self.flow.set_activate_on_single_click(False)
-        self.flow.set_border_width(12)
+        self.flow.set_border_width(14)
+        self.flow.set_homogeneous(True)
+        # Rows size themselves to their content; without this a part-filled
+        # final row stretches to fill the viewport and paints selection over it.
+        self.flow.set_valign(Gtk.Align.START)
         self.flow.connect("selected-children-changed", self._selection_changed)
         self.flow.connect("child-activated", lambda *_args: self.apply())
         scroll.add(self.flow)
@@ -132,6 +136,7 @@ class Window(Gtk.ApplicationWindow):
         bar.get_style_context().add_class("gallery-footer")
         content.pack_end(bar, False, False, 0)
         self.status = Gtk.Label(label="No folder selected", xalign=0)
+        self.status.get_style_context().add_class("status-label")
         self.status.set_ellipsize(3)
         bar.pack_start(self.status)
         self.apply_button = Gtk.Button(label="Apply", sensitive=False)
@@ -150,21 +155,77 @@ class Window(Gtk.ApplicationWindow):
     def _load_styles():
         provider = Gtk.CssProvider()
         provider.load_from_data(b"""
+            /* The app is deliberately rectangular: no rounded corners. */
+            headerbar, button, entry, combobox button, infobar,
+            flowboxchild, scrollbar slider, popover, menu {
+                border-radius: 0;
+            }
+            headerbar {
+                box-shadow: none;
+                border-bottom: 1px solid alpha(@theme_fg_color, 0.14);
+            }
+            headerbar button {
+                padding: 4px 14px;
+            }
             .settings-sidebar {
                 background-color: alpha(@theme_fg_color, 0.035);
                 border-right: 1px solid alpha(@theme_fg_color, 0.12);
             }
             .section-title {
-                font-size: 1.15em;
+                font-size: 1.05em;
                 font-weight: bold;
             }
             .field-label {
-                color: alpha(@theme_fg_color, 0.65);
-                font-size: 0.82em;
+                color: alpha(@theme_fg_color, 0.55);
+                font-size: 0.75em;
                 font-weight: bold;
+                letter-spacing: 0.14em;
             }
             .gallery-footer {
                 border-top: 1px solid alpha(@theme_fg_color, 0.12);
+            }
+            .gallery-footer button {
+                padding: 5px 20px;
+                font-weight: bold;
+            }
+            .status-label {
+                color: alpha(@theme_fg_color, 0.62);
+            }
+            /* Selection is drawn on the tile, not as a slab behind it. */
+            flowbox, flowboxchild, flowboxchild:selected {
+                background-color: transparent;
+                outline-style: none;
+                padding: 0;
+            }
+            .tile {
+                background-color: alpha(@theme_fg_color, 0.04);
+                border: 1px solid alpha(@theme_fg_color, 0.11);
+                padding: 7px;
+            }
+            flowboxchild:hover .tile {
+                background-color: alpha(@theme_fg_color, 0.08);
+                border-color: alpha(@theme_fg_color, 0.26);
+            }
+            /* Selection is carried by the tile fill alone. */
+            flowboxchild:selected .tile {
+                background-color: alpha(@theme_selected_bg_color, 0.22);
+            }
+            /* The default focus ring is suppressed above, so keyboard
+               navigation marks the tile edge instead. */
+            flowboxchild:focus .tile {
+                border-color: alpha(@theme_selected_bg_color, 0.8);
+            }
+            .tile-image {
+                background-color: alpha(@theme_fg_color, 0.07);
+                border: 1px solid alpha(@theme_fg_color, 0.10);
+            }
+            .tile-name {
+                color: alpha(@theme_fg_color, 0.78);
+                font-size: 0.9em;
+            }
+            flowboxchild:selected .tile-name {
+                color: @theme_fg_color;
+                font-weight: bold;
             }
         """)
         Gtk.StyleContext.add_provider_for_screen(
@@ -280,14 +341,28 @@ class Window(Gtk.ApplicationWindow):
 
     @staticmethod
     def _find_paths(folder, recursive):
-        iterator = folder.rglob("*") if recursive else folder.iterdir()
+        # os.walk reports unreadable directories through onerror; rglob
+        # swallows them silently, which hid permission failures entirely.
+        unreadable = []
+        found = []
         try:
-            paths = sorted((path for path in iterator
-                            if path.is_file() and path.suffix.lower() in EXTENSIONS),
-                           key=lambda path: str(path).casefold())
-            return paths, None
+            if recursive:
+                for parent, _directories, names in os.walk(
+                        folder, onerror=unreadable.append):
+                    found.extend(Path(parent) / name for name in names)
+            else:
+                found.extend(folder.iterdir())
         except OSError as error:
             return [], str(error)
+        paths = sorted((path for path in found
+                        if path.suffix.lower() in EXTENSIONS and path.is_file()),
+                       key=lambda path: str(path).casefold())
+        if not unreadable:
+            return paths, None
+        reason = str(unreadable[0])
+        if len(unreadable) > 1:
+            reason += f" (and {len(unreadable) - 1} more)"
+        return paths, reason
 
     def scan(self):
         if not self.folder:
@@ -319,9 +394,8 @@ class Window(Gtk.ApplicationWindow):
         if error:
             self.message(f"Could not completely scan the folder: {error}")
         if not paths:
-            self.empty_title.set_markup("<big><b>No wallpaper images found</b></big>")
-            self.empty_detail.set_text("Choose another folder or include subfolders.")
-            self.stack.set_visible_child_name("empty")
+            self._show_empty("No wallpaper images found",
+                             "Choose another folder or include subfolders.")
             self.status.set_text(f"0 images in {self._folder_name()}")
             return GLib.SOURCE_REMOVE
         self.stack.set_visible_child_name("gallery")
@@ -331,27 +405,53 @@ class Window(Gtk.ApplicationWindow):
         ).start()
         return GLib.SOURCE_REMOVE
 
+    @staticmethod
+    def _thumbnail(path):
+        """Decode one image into the 200x125 tile box, or None if unreadable."""
+        try:
+            # Decode inside a square box first. A quarter-turn orientation tag
+            # swaps the dimensions, so scaling straight to 200x125 and rotating
+            # afterwards would leave the thumbnail 200 pixels tall.
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                str(path), 200, 200, True
+            ).apply_embedded_orientation()
+        except GLib.Error:
+            return None
+        if pixbuf.get_height() > 125:
+            width = round(pixbuf.get_width() * 125 / pixbuf.get_height())
+            pixbuf = pixbuf.scale_simple(
+                max(width, 1), 125, GdkPixbuf.InterpType.BILINEAR)
+        return pixbuf
+
+    def _show_empty(self, title, detail):
+        self.empty_title.set_markup(
+            f"<big><b>{GLib.markup_escape_text(title)}</b></big>")
+        self.empty_detail.set_text(detail)
+        self.stack.set_visible_child_name("empty")
+
     def _thumbnail_worker(self, paths, scan_id):
         for path in paths:
             if scan_id != self.scan_id:
                 return
-            try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                    str(path), 200, 125, True
-                ).apply_embedded_orientation()
-            except GLib.Error:
+            pixbuf = self._thumbnail(path)
+            if pixbuf is None:
                 continue
             GLib.idle_add(self._add_thumbnail, path, pixbuf, scan_id)
         GLib.idle_add(self._finish_thumbnails, scan_id)
 
     def _add_thumbnail(self, path, pixbuf, scan_id):
         if scan_id == self.scan_id:
-            tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
             tile.set_size_request(200, -1)
+            # Hug the thumbnail instead of stretching across the grid cell.
+            tile.set_halign(Gtk.Align.CENTER)
+            tile.get_style_context().add_class("tile")
             image = Gtk.Image.new_from_pixbuf(pixbuf)
             image.set_size_request(200, 125)
+            image.get_style_context().add_class("tile-image")
             tile.pack_start(image, False, False, 0)
-            label = Gtk.Label(label=path.name, ellipsize=3, max_width_chars=25)
+            label = Gtk.Label(label=path.name, ellipsize=3, max_width_chars=22)
+            label.get_style_context().add_class("tile-name")
             label.set_tooltip_text(str(path))
             tile.pack_start(label, False, False, 0)
             child = Gtk.FlowBoxChild()
@@ -364,6 +464,9 @@ class Window(Gtk.ApplicationWindow):
 
     def _finish_thumbnails(self, scan_id):
         if scan_id == self.scan_id:
+            if not self.loaded:
+                self._show_empty("No images could be opened",
+                                 "None of these files could be read as JPEG or PNG.")
             noun = "image" if self.loaded == 1 else "images"
             self.status.set_text(
                 f"{self.loaded} {noun} in {self._folder_name()}"
@@ -428,14 +531,28 @@ class Window(Gtk.ApplicationWindow):
                              (result.stderr.strip() or "unknown xwallpaper error"))
 
         if command is not None and error is None:
-            for destination, save_command in (
-                ("~/.xinitrc", save_xinitrc_command),
-                ("DWM autostart", save_dwm_autostart_command),
+            skipped = []
+            written = 0
+            for destination, save_command, applies in (
+                ("~/.xinitrc", save_xinitrc_command, True),
+                ("DWM autostart", save_dwm_autostart_command,
+                 dwm_autostart_applies()),
             ):
+                if not applies:
+                    continue
                 try:
-                    save_command(command)
+                    reason = save_command(command)
                 except OSError as caught:
                     persistence_errors.append(f"{destination}: {caught}")
+                else:
+                    if reason:
+                        skipped.append(reason)
+                    else:
+                        written += 1
+            # Skipping one destination is routine. Skipping every one means the
+            # wallpaper will not come back after a restart, so report it.
+            if not written:
+                persistence_errors.extend(skipped)
 
         GLib.idle_add(
             self._apply_ready, selected, folder, mode, output, available,

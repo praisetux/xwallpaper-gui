@@ -55,20 +55,32 @@ def _remove_managed_block(lines):
         begin -= 1
 
 
+def _starts_a_session(lines):
+    """True when something other than comments would run."""
+    return any(line.strip() and not line.lstrip().startswith("#")
+               for line in lines)
+
+
 def save_xinitrc_command(command, path=None):
     """Add or replace our command in an existing user xinitrc.
 
-    Creating an xinitrc containing only a wallpaper command would override the
-    system xinitrc and leave ``startx`` with no desktop session to launch.
+    Returns None once written, or the reason it was left alone. Creating an
+    xinitrc containing only a wallpaper command would override the system
+    xinitrc and leave ``startx`` with no desktop session to launch.
     """
     target = Path(path) if path is not None else Path.home() / ".xinitrc"
     try:
         existing = target.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return False
+        return f"{target} does not exist, so the wallpaper was not added to it"
 
     lines = existing.splitlines()
     _remove_managed_block(lines)
+    if not _starts_a_session(lines):
+        # Earlier versions created an xinitrc holding nothing but the wallpaper
+        # command. Rewriting one would keep startx launching a session with no
+        # window manager, so leave it untouched and say why.
+        return f"{target} starts no desktop session, so it was left unchanged"
 
     while lines and not lines[-1]:
         lines.pop()
@@ -84,7 +96,7 @@ def save_xinitrc_command(command, path=None):
     lines[insertion:insertion] = block
 
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return True
+    return None
 
 
 def dwm_autostart_path():
@@ -92,6 +104,11 @@ def dwm_autostart_path():
     data_home = os.environ.get("XDG_DATA_HOME")
     base = Path(data_home) if data_home else Path.home() / ".local" / "share"
     return base / "dwm" / "autostart.sh"
+
+
+def dwm_autostart_applies():
+    """DWM's autostart is only worth writing where DWM is actually used."""
+    return bool(shutil.which("dwm")) or dwm_autostart_path().exists()
 
 
 def save_dwm_autostart_command(command, path=None):
@@ -117,3 +134,4 @@ def save_dwm_autostart_command(command, path=None):
     ])
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     target.chmod(target.stat().st_mode | 0o100)
+    return None
