@@ -319,7 +319,7 @@ class WindowControlTests(unittest.TestCase):
         window = mock.Mock()
         app.Window.message(window, "something happened")
         window.info_label.set_text.assert_called_once_with("something happened")
-        window.info_label.show.assert_called_once_with()
+        window.info.get_content_area.return_value.show_all.assert_called_once_with()
         window.info.show.assert_called_once_with()
         window.info.show_all.assert_not_called()
 

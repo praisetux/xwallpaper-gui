@@ -293,7 +293,7 @@ class Window(Gtk.ApplicationWindow):
     def message(self, text, kind=Gtk.MessageType.WARNING):
         self.info.set_message_type(kind)
         self.info_label.set_text(text)
-        self.info_label.show()
+        self.info.get_content_area().show_all()
         self.info.show()
 
     def remember(self):
@@ -579,5 +579,5 @@ class Window(Gtk.ApplicationWindow):
             self.message("Wallpaper applied, but startup could not be updated: " +
                          "; ".join(persistence_errors))
         else:
-            self.message(f"Applied {selected.name}", Gtk.MessageType.INFO)
+            self.message("Wallpaper applied", Gtk.MessageType.INFO)
         return GLib.SOURCE_REMOVE
